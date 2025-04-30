@@ -1,6 +1,7 @@
 from .api import (
     set_default_app,
     get_default_app,
+    get_app,
     get_faces,
     load_image_file,
     face_locations,

@@ -9,77 +9,137 @@ from PySide6.QtGui import QImage, QPixmap, QCloseEvent
 from PySide6.QtCore import QThread, Signal, QObject
 
 import requests
+import time
 
 
-class VideoThread(QThread):
+class FaceRecognition(QThread):
     image_update = Signal(QImage)
 
-    def __init__(self, screenSize: tuple[int, int], parent: QObject = None):
-        ifr.set_default_app(root=os.path.join(os.path.expanduser("~"), ".insightface"))
+    def __init__(self, parent: QObject = None):
         super().__init__(parent)
-        self.screenSize = screenSize
+        MODEL_ROOT = os.path.join(os.path.expanduser("~"), ".insightface")
+
+        self.detect = ifr.get_app(
+            model_name="buffalo_l",
+            root=MODEL_ROOT,
+            allowed_modules=["detection"],
+        )
+        self.recognize = ifr.get_app(
+            model_name="buffalo_l",
+            root=MODEL_ROOT,
+            allowed_modules=["detection", "recognition"],
+        )
+
+        self.cooldown_end_time = 0
+        self.face_detected_start = None
+        self.last_encoding = None
+        self.last_result_frame = None
 
     def run(self):
         self.capture = cv2.VideoCapture(0)
         self.session = requests.Session()
-        lastEncoding = None
+
+        if not self.capture.isOpened():
+            return
+
+        height, width = 370, 670
+        faceMinSize = int(height * 0.35), int(width * 0.35)
+
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
 
         while True:
-            ret, frame = self.capture.read()
+            current_time = time.time()
+
+            # Cooldown handling
+            if current_time < self.cooldown_end_time:
+                if self.last_result_frame is not None:
+                    self.image_update.emit(self.cvImageToQtImage(self.last_result_frame))
+                continue
+
+            # Frame processing
+            ret, original_frame = self.capture.read()
             if not ret:
                 break
 
-            print(frame.dtype)
+            frame = original_frame.copy()
+            faces = ifr.get_faces(frame, maxNum=1, minSize=faceMinSize, app=self.detect)
+            locations = ifr.face_locations(frame, faces=faces)
 
-            resized = self.adjustToScreenSize(frame)
-            faces = ifr.get_faces(resized, maxNum=1)
-
-            locations = ifr.face_locations(resized, faces=faces)
-            encodings = ifr.face_encodings(resized, faces=faces)
-
+            # Draw detection rectangles
             for top, right, bottom, left in locations:
-                cv2.rectangle(resized, (left, top), (right, bottom), (0, 255, 0), 2)
+                cv2.rectangle(original_frame, (left, top), (right, bottom), (255, 0, 0), 2)
 
-            qt_image = self.cvImageToQtImage(resized)
-            self.image_update.emit(qt_image)
+            if not faces:
+                self.face_detected_start = None
+                self.image_update.emit(self.cvImageToQtImage(original_frame))
+                continue
 
-            if encodings:
-                if lastEncoding is not None:
-                    similarity = ifr.face_similarity([lastEncoding], encodings[0])[0]
-                    if similarity > 0.65:
-                        continue
+            # Start face detection timer
+            if self.face_detected_start is None:
+                self.face_detected_start = current_time
+                self.image_update.emit(self.cvImageToQtImage(original_frame))
+                continue
 
-                response = self.session.post("http://192.168.2.67:8080/api/recognize/", data=encodings[0].tobytes())
-                lastEncoding = encodings[0]
-                print(response.json())
+            # Check 3-second threshold
+            if (current_time - self.face_detected_start) < 3:
+                self.image_update.emit(self.cvImageToQtImage(original_frame))
+                continue
 
+            # Face recognition processing
+            faces = ifr.get_faces(frame, maxNum=1, minSize=faceMinSize, app=self.recognize)
+            encodings = ifr.face_encodings(frame, faces=faces)
+
+            if not encodings:
+                self.face_detected_start = None
+                self.image_update.emit(self.cvImageToQtImage(original_frame))
+                continue
+
+            current_encoding = encodings[0]
+            response = None
+            color = (255, 0, 0)  # Default blue
+
+            # Check if same person
+            if self.last_encoding is not None:
+                similarity = ifr.face_similarity([self.last_encoding], current_encoding)[0]
+                if similarity > 0.7:
+                    color = (0, 255, 0)  # Green for recognized
+                    self.cooldown_end_time = current_time + 2
+                else:
+                    # New person - send to API
+                    response = self.session.post("http://192.168.2.67:8080/api/recognize/", data=current_encoding.tobytes())
             else:
-                lastEncoding = None
+                # First recognition - send to API
+                response = self.session.post("http://192.168.2.67:8080/api/recognize/", data=current_encoding.tobytes())
+
+            # Handle API response
+            if response is not None:
+                if response.ok:
+                    color = (0, 255, 0)  # Green
+                    self.last_encoding = current_encoding
+                else:
+                    color = (0, 0, 255)  # Red
+                    self.last_encoding = None
+
+            # Update frame and cooldown
+            for top, right, bottom, left in locations:
+                cv2.rectangle(original_frame, (left, top), (right, bottom), color, 2)
+
+            self.cooldown_end_time = current_time + 2
+            self.last_result_frame = original_frame.copy()
+            self.image_update.emit(self.cvImageToQtImage(original_frame))
+            self.face_detected_start = None
 
     def stop(self):
         self.capture.release()
         self.session.close()
         self.quit()
 
-    def adjustToScreenSize(self, image: np.ndarray):
-        hi, wi = image.shape[:2]
-        ws, hs = self.screenSize
-        ri, rs = wi / hi, ws / hs
-
-        wn = int(wi * hs / hi) if (rs > ri) else ws
-        hn = hs if (rs > ri) else int(hi * ws / wi)
-        wn, hn = max(wn, 1), max(hn, 1)
-
-        if (wn * hn) < (wi * hi):
-            return cv2.resize(image, (wn, hn), interpolation=cv2.INTER_AREA)
-        return cv2.resize(image, (wn, hn), interpolation=cv2.INTER_LINEAR)
-
     def cvImageToQtImage(self, image: np.ndarray):
         rgbImage = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         h, w, ch = rgbImage.shape
         bytesPerLine = ch * w
-        qtImage = QImage(rgbImage.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
-        return qtImage
+        return QImage(rgbImage.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
 
 
 class MainWindow(QMainWindow):
@@ -87,7 +147,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Real-Time Face Recognition")
         self.image_label = QLabel()
-        self.image_label.setFixedSize(640, 480)
 
         layout = QVBoxLayout()
         layout.addWidget(self.image_label)
@@ -96,15 +155,15 @@ class MainWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        self.v_thread = VideoThread((640, 480))
-        self.v_thread.image_update.connect(self.update_image)
-        self.v_thread.start()
+        self.fr_thread = FaceRecognition(self)
+        self.fr_thread.image_update.connect(self.update_image)
+        self.fr_thread.start()
 
     def update_image(self, qt_image: QImage):
         self.image_label.setPixmap(QPixmap.fromImage(qt_image))
 
     def closeEvent(self, event: QCloseEvent):
-        self.v_thread.stop()
+        self.fr_thread.stop()
         event.accept()
 
 

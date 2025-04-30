@@ -7,6 +7,7 @@ and embedding extraction.
 Provided functions:
   • set_default_app()         – (Re)initializes the global FaceAnalysis instance.
   • get_default_app()         – Returns the global FaceAnalysis instance.
+  • get_app()                 – Returns a new FaceAnalysis instance.
   • get_faces()               – Detects faces in an image using the default FaceAnalysis instance.
   • load_image_file()         – Loads an image file in BGR format using OpenCV.
   • face_locations()          – Returns bounding boxes (top, right, bottom, left) for detected faces.
@@ -76,7 +77,43 @@ def get_default_app():
     return _default_app
 
 
-def get_faces(image, minSize=(50, 50), maxSize=(5000, 5000), maxNum=5, reverse=True):
+def get_app(
+    model_name="buffalo_l",
+    root="./.insightface",
+    allowed_modules=["detection", "recognition"],
+    providers=["CPUExecutionProvider"],
+    ctx_id=-1,
+    det_thresh=0.5,
+    det_size=(640, 640),
+):
+    """
+    Get FaceAnalysis instance.
+
+    Parameters:
+      model_name (str): Name of the InsightFace model (default "buffalo_l").
+      root (str): Directory for model cache/downloads.
+      allowed_modules (list or None): Optional list to restrict module loading
+                                      (e.g., ["detection", "recognition"]).
+      providers (list): Execution providers (e.g., ["CPUExecutionProvider"]).
+      ctx_id (int): Context id (-1 for CPU, 0 for GPU).
+      det_thresh (float): Face detection threshold (default 0.5).
+      det_size (tuple): Input size for face detection (default (640, 640)).
+    """
+    app = FaceAnalysis(
+        name=model_name,
+        root=root,
+        allowed_modules=allowed_modules,
+        providers=providers,
+    )
+    app.prepare(
+        ctx_id=ctx_id,
+        det_thresh=det_thresh,
+        det_size=det_size,
+    )
+    return app
+
+
+def get_faces(image, minSize=(50, 50), maxSize=(5000, 5000), maxNum=5, reverse=True, *, app=None):
     """
     Detects faces in the input image and then filters them by size.
 
@@ -86,11 +123,15 @@ def get_faces(image, minSize=(50, 50), maxSize=(5000, 5000), maxNum=5, reverse=T
       maxSize (tuple): Maximum size (height, width) for a face bounding box.
       maxNum (int): Maximum number of Face objects to return.
       reverse (bool): If True, sort faces in descending order by area (largest first).
+      app (FaceAnalysis): Optional FaceAnalysis instance. If None, uses the default instance.
 
     Returns:
       list: A list of valid Face objects.
     """
-    faces = get_default_app().get(image, max_num=maxNum + 2)
+    if app is None:
+        app = get_default_app()
+
+    faces = app.get(image, max_num=maxNum + 2)
 
     h, w, _ = image.shape
     valid_faces = []
