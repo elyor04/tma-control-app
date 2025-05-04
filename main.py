@@ -11,6 +11,8 @@ from PySide6.QtCore import QThread, Signal, QObject
 import requests
 import time
 
+BACKEND_BASE_URL = "http://localhost:8000"
+
 
 class FaceRecognition(QThread):
     image_update = Signal(QImage)
@@ -42,11 +44,16 @@ class FaceRecognition(QThread):
         if not self.capture.isOpened():
             return
 
-        height, width = 370, 670
-        faceMinSize = int(height * 0.35), int(width * 0.35)
+        height = self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        width = self.capture.get(cv2.CAP_PROP_FRAME_WIDTH)
+        height, width = self.getScreenSize(height, width)
 
         self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+
+        height = self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        width = self.capture.get(cv2.CAP_PROP_FRAME_WIDTH)
+        faceMinSize = int(height * 0.3), int(width * 0.3)
 
         while True:
             current_time = time.time()
@@ -81,8 +88,8 @@ class FaceRecognition(QThread):
                 self.image_update.emit(self.cvImageToQtImage(original_frame))
                 continue
 
-            # Check 3-second threshold
-            if (current_time - self.face_detected_start) < 3:
+            # Check 2-second threshold
+            if (current_time - self.face_detected_start) < 2:
                 self.image_update.emit(self.cvImageToQtImage(original_frame))
                 continue
 
@@ -104,13 +111,17 @@ class FaceRecognition(QThread):
                 similarity = ifr.face_similarity([self.last_encoding], current_encoding)[0]
                 if similarity > 0.7:
                     color = (0, 255, 0)  # Green for recognized
-                    self.cooldown_end_time = current_time + 2
+                    self.cooldown_end_time = current_time + 1
                 else:
                     # New person - send to API
-                    response = self.session.post("http://192.168.2.67:8080/api/recognize/", data=current_encoding.tobytes())
+                    try:
+                        response = self.session.post(f"{BACKEND_BASE_URL}/api/recognize/", data=current_encoding.tobytes())
+                    except: pass
             else:
                 # First recognition - send to API
-                response = self.session.post("http://192.168.2.67:8080/api/recognize/", data=current_encoding.tobytes())
+                try:
+                    response = self.session.post(f"{BACKEND_BASE_URL}/api/recognize/", data=current_encoding.tobytes())
+                except: pass
 
             # Handle API response
             if response is not None:
@@ -125,7 +136,7 @@ class FaceRecognition(QThread):
             for top, right, bottom, left in locations:
                 cv2.rectangle(original_frame, (left, top), (right, bottom), color, 2)
 
-            self.cooldown_end_time = current_time + 2
+            self.cooldown_end_time = current_time + 1
             self.last_result_frame = original_frame.copy()
             self.image_update.emit(self.cvImageToQtImage(original_frame))
             self.face_detected_start = None
@@ -136,10 +147,29 @@ class FaceRecognition(QThread):
         self.quit()
 
     def cvImageToQtImage(self, image: np.ndarray):
+        image = self.adjustToScreenSize(image)
         rgbImage = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         h, w, ch = rgbImage.shape
         bytesPerLine = ch * w
         return QImage(rgbImage.data, w, h, bytesPerLine, QImage.Format.Format_RGB888)
+
+    def getScreenSize(self, hi: int, wi: int):
+        hs, ws = self.parent().screenSize
+        ri, rs = wi / hi, ws / hs
+
+        wn = int(wi * hs / hi) if (rs > ri) else ws
+        hn = hs if (rs > ri) else int(hi * ws / wi)
+        wn, hn = max(wn, 1), max(hn, 1)
+
+        return hn, wn
+
+    def adjustToScreenSize(self, image: np.ndarray):
+        hi, wi = image.shape[:2]
+        hn, wn = self.getScreenSize(hi, wi)
+
+        if (wn * hn) < (wi * hi):
+            return cv2.resize(image, (wn, hn), interpolation=cv2.INTER_AREA)
+        return cv2.resize(image, (wn, hn), interpolation=cv2.INTER_LINEAR)
 
 
 class MainWindow(QMainWindow):
@@ -166,9 +196,13 @@ class MainWindow(QMainWindow):
         self.fr_thread.stop()
         event.accept()
 
+    @property
+    def screenSize(self):
+        return self.image_label.height(), self.image_label.width()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.show()
+    window.showFullScreen()
     sys.exit(app.exec())
