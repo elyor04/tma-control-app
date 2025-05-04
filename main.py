@@ -16,6 +16,8 @@ BACKEND_BASE_URL = "http://localhost:8080"
 WAIT_BEFORE_RECOGNITION = 2
 WAIT_AFTER_RECOGNITION = 1
 
+FACE_MIN_SIZE = 0.25
+
 
 class FaceRecognition(QThread):
     image_update = Signal(QImage)
@@ -56,7 +58,7 @@ class FaceRecognition(QThread):
 
         height = self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
         width = self.capture.get(cv2.CAP_PROP_FRAME_WIDTH)
-        faceMinSize = int(height * 0.3), int(width * 0.3)
+        faceMinSize = int(height * FACE_MIN_SIZE), int(width * FACE_MIN_SIZE)
 
         while True:
             current_time = time.time()
