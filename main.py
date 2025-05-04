@@ -41,6 +41,7 @@ class FaceRecognition(QThread):
         self.face_detected_start = None
         self.last_encoding = None
         self.last_result_frame = None
+        self.last_recognition_result = None
 
     def run(self):
         self.capture = cv2.VideoCapture(0)
@@ -128,23 +129,23 @@ class FaceRecognition(QThread):
                     response = self.session.post(f"{BACKEND_BASE_URL}/api/recognize/", data=current_encoding.tobytes())
                 except: pass
 
-            full_name = None
-
             # Handle API response
             if response is not None:
                 if response.ok:
                     color = (0, 255, 0)  # Green
                     self.last_encoding = current_encoding
-                    full_name = response.json()["student"]["full_name"]
+                    self.last_recognition_result = response.json()
                 else:
                     color = (0, 0, 255)  # Red
                     self.last_encoding = None
+                    self.last_recognition_result = None
 
             # Update frame and cooldown
             for top, right, bottom, left in locations:
                 cv2.rectangle(original_frame, (left, top), (right, bottom), color, 2)
 
-            if full_name is not None:
+            if self.last_recognition_result is not None:
+                full_name = self.last_recognition_result["student"]["full_name"]
                 cv2.putText(original_frame, full_name, (left, top - 20), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
             self.cooldown_end_time = current_time + WAIT_AFTER_RECOGNITION
