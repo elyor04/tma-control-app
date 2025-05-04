@@ -11,7 +11,10 @@ from PySide6.QtCore import QThread, Signal, QObject
 import requests
 import time
 
-BACKEND_BASE_URL = "http://localhost:8000"
+BACKEND_BASE_URL = "http://localhost:8080"
+
+WAIT_BEFORE_RECOGNITION = 2
+WAIT_AFTER_RECOGNITION = 1
 
 
 class FaceRecognition(QThread):
@@ -89,7 +92,7 @@ class FaceRecognition(QThread):
                 continue
 
             # Check 2-second threshold
-            if (current_time - self.face_detected_start) < 2:
+            if (current_time - self.face_detected_start) < WAIT_BEFORE_RECOGNITION:
                 self.image_update.emit(self.cvImageToQtImage(original_frame))
                 continue
 
@@ -111,7 +114,7 @@ class FaceRecognition(QThread):
                 similarity = ifr.face_similarity([self.last_encoding], current_encoding)[0]
                 if similarity > 0.7:
                     color = (0, 255, 0)  # Green for recognized
-                    self.cooldown_end_time = current_time + 1
+                    self.cooldown_end_time = current_time + WAIT_AFTER_RECOGNITION
                 else:
                     # New person - send to API
                     try:
@@ -136,7 +139,7 @@ class FaceRecognition(QThread):
             for top, right, bottom, left in locations:
                 cv2.rectangle(original_frame, (left, top), (right, bottom), color, 2)
 
-            self.cooldown_end_time = current_time + 1
+            self.cooldown_end_time = current_time + WAIT_AFTER_RECOGNITION
             self.last_result_frame = original_frame.copy()
             self.image_update.emit(self.cvImageToQtImage(original_frame))
             self.face_detected_start = None
