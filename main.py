@@ -14,7 +14,7 @@ import time
 BACKEND_BASE_URL = "http://localhost:8080"
 
 WAIT_BEFORE_RECOGNITION = 2
-WAIT_AFTER_RECOGNITION = 1
+WAIT_AFTER_RECOGNITION = 2
 
 FACE_MIN_SIZE = 0.25
 
@@ -128,11 +128,14 @@ class FaceRecognition(QThread):
                     response = self.session.post(f"{BACKEND_BASE_URL}/api/recognize/", data=current_encoding.tobytes())
                 except: pass
 
+            full_name = None
+
             # Handle API response
             if response is not None:
                 if response.ok:
                     color = (0, 255, 0)  # Green
                     self.last_encoding = current_encoding
+                    full_name = response.json()["student"]["full_name"]
                 else:
                     color = (0, 0, 255)  # Red
                     self.last_encoding = None
@@ -140,6 +143,9 @@ class FaceRecognition(QThread):
             # Update frame and cooldown
             for top, right, bottom, left in locations:
                 cv2.rectangle(original_frame, (left, top), (right, bottom), color, 2)
+
+            if full_name is not None:
+                cv2.putText(original_frame, full_name, (left, top - 20), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
             self.cooldown_end_time = current_time + WAIT_AFTER_RECOGNITION
             self.last_result_frame = original_frame.copy()
