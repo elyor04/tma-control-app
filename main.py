@@ -13,6 +13,8 @@ import time
 
 BACKEND_BASE_URL = "http://localhost:8080"
 
+API_KEY = "dhfgt6r757FCFDJRTE^U%&R^*R&%kjydruse65r768t79y809-09-Y)OGU(Y*)TGIYFR&R%^T*gy"
+
 WAIT_BEFORE_RECOGNITION = 2
 WAIT_AFTER_RECOGNITION = 2
 
@@ -121,13 +123,23 @@ class FaceRecognition(QThread):
                 else:
                     # New person - send to API
                     try:
-                        response = self.session.post(f"{BACKEND_BASE_URL}/api/recognize/", data=current_encoding.tobytes())
-                    except: pass
+                        response = self.session.post(
+                            f"{BACKEND_BASE_URL}/api/recognize/",
+                            data=current_encoding.tobytes(),
+                            headers={"x-api-key": API_KEY},
+                        )
+                    except:
+                        pass
             else:
                 # First recognition - send to API
                 try:
-                    response = self.session.post(f"{BACKEND_BASE_URL}/api/recognize/", data=current_encoding.tobytes())
-                except: pass
+                    response = self.session.post(
+                        f"{BACKEND_BASE_URL}/api/recognize/",
+                        data=current_encoding.tobytes(),
+                        headers={"x-api-key": API_KEY},
+                    )
+                except:
+                    pass
 
             # Handle API response
             if response is not None:
